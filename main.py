@@ -3,6 +3,8 @@
 # Writes exactly one line to $MAKEFUN_OUTPUT_DIR/entry.txt
 # (and to /output/entry.txt when that is a different directory),
 # then reads the file back and fails hard unless it is byte-identical.
+# Gate (RULES.txt): /output/entry.txt must be UTF-8 text of 1 to 200
+# characters, not only white space, exactly one sentence.
 
 import os
 from pathlib import Path
