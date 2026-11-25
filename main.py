@@ -1,71 +1,79 @@
-# Pigeon Pitch, One Line — winning entry.
-# Deterministic, no network, no clock, no randomness.
-# Writes exactly one line to $MAKEFUN_OUTPUT_DIR/entry.txt
-# (and to /output/entry.txt when that is a different directory),
-# then reads the file back and fails hard unless it is byte-identical.
-# Gate (RULES.txt): /output/entry.txt must be UTF-8 text of 1 to 200
-# characters, not only white space, exactly one sentence.
+"""Pigeon Pitch, One Line — entry writer.
+
+Prints the one-line elevator pitch and writes it, byte for byte, to
+$MAKEFUN_OUTPUT_DIR/entry.txt and to /output/entry.txt (when they differ),
+verifying every written file by reading it back.
+"""
 
 import os
-from pathlib import Path
+import sys
 
-ENTRY = (
+PITCH = (
     "We run a 10,000-courier delivery fleet paid in breadcrumbs, "
     "and our only churn is when a hawk eats middle management."
 )
 
+MAX_CHARS = 200
+SECONDARY_DIR = "/output"
+TARGET_NAME = "entry.txt"
 
-def fail(message):
-    raise SystemExit(message)
+
+def _reject(reason):
+    print("INVALID: " + reason, file=sys.stderr)
+    sys.exit(1)
 
 
-def sentence_problem(text):
-    """Return None when text is exactly one sentence, else the reason."""
+def check_pitch(text):
+    """Gate the pitch: one non-blank line, 1-200 chars, exactly one sentence."""
     if not text:
-        return "empty text"
-    if text != text.strip():
-        return "leading or trailing whitespace"
-    if not text.endswith("."):
-        return "does not end with a full stop"
-    # A sentence boundary (". " / "? " / "! ") inside the text means >1 sentence.
-    for marker in (". ", "? ", "! "):
-        if marker in text:
-            return "contains more than one sentence"
-    if any(ord(c) < 32 for c in text):
-        return "contains control characters"
-    return None
-
-
-def validate_entry(text):
-    """Final gate, run immediately before writing: re-check the entry
-    from scratch so a bad entry can never reach the output file."""
-    if not text or not text.strip():
-        fail("entry must not be empty or whitespace-only")
+        _reject("pitch is empty")
+    if text.strip() == "":
+        _reject("pitch is only whitespace")
     if "\n" in text or "\r" in text:
-        fail("entry must be a single line")
-    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in text):
-        fail("entry must not contain control characters")
-    if not 1 <= len(text) <= 200:
-        fail(f"entry must be 1 to 200 characters, got {len(text)}")
+        _reject("pitch spans more than one line")
+    if len(text) > MAX_CHARS:
+        _reject("pitch is %d chars, over the %d limit" % (len(text), MAX_CHARS))
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in text):
+        _reject("pitch contains a control character")
+    if text != text.strip():
+        _reject("pitch has leading or trailing whitespace")
+    if "  " in text:
+        _reject("pitch has a double space")
+    if not text.endswith("."):
+        _reject("pitch must end with a full stop")
+    body = text[:-1]
+    for closer in (". ", "? ", "! "):
+        if closer in body:
+            _reject("pitch has a sentence break in the middle")
+    if "?" in body or "!" in body:
+        _reject("pitch has a question or exclamation mark in the middle")
+
+
+def write_and_prove(folder, payload):
+    """Write payload to folder/entry.txt, then read it back and compare bytes."""
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, TARGET_NAME)
+    with open(path, "wb") as handle:
+        handle.write(payload)
+    with open(path, "rb") as handle:
+        back = handle.read()
+    if back != payload:
+        _reject("read-back mismatch in %s" % path)
+    return path
 
 
 def main():
-    problem = sentence_problem(ENTRY)
-    if problem is not None:
-        fail(f"entry is not exactly one sentence ({problem}): {ENTRY!r}")
-    if not 1 <= len(ENTRY) <= 200:
-        fail(f"entry must be 1-200 characters, got {len(ENTRY)}")
-    validate_entry(ENTRY)
-    out_dir = os.environ.get("MAKEFUN_OUTPUT_DIR", "/output")
-    targets = {str(Path(out_dir) / "entry.txt"), "/output/entry.txt"}
-    for target in sorted(targets):
-        path = Path(target)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(ENTRY, encoding="utf-8")
-        back = path.read_text(encoding="utf-8")
-        if back != ENTRY:
-            fail(f"read-back mismatch for {target}")
-    print(ENTRY)
+    check_pitch(PITCH)
+    payload = PITCH.encode("utf-8")
+    print(PITCH)
+
+    primary = os.environ.get("MAKEFUN_OUTPUT_DIR") or SECONDARY_DIR
+    written = [write_and_prove(primary, payload)]
+    if os.path.abspath(primary) != os.path.abspath(SECONDARY_DIR):
+        written.append(write_and_prove(SECONDARY_DIR, payload))
+
+    for path in written:
+        print("wrote %s (%d bytes)" % (path, len(payload)))
 
 
 if __name__ == "__main__":
